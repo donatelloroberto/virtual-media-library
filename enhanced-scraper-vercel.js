@@ -1,67 +1,47 @@
+const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-const readline = require('readline');
 
-class EnhancedMediaScraper {
+class VercelMediaScraper {
 
   constructor() {
     this.baseUrl = 'https://gay.xtapes.in';
-    this.db = new sqlite3.Database(path.join(__dirname, 'media_library.db'));
     this.shouldStop = false;
-    this.initDatabase();
-    this.setupGracefulQuit();
+    this.studios = [];
+    this.videos = [];
+
+    // Load studios/categories from URLs.txt on startup
+    this.loadStudiosFromFile(path.join(__dirname, 'URLs.txt'));
   }
 
-  initDatabase() {
-    this.db.serialize(() => {
-      // Create studios table
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS studios (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT UNIQUE NOT NULL,
-          url TEXT NOT NULL,
-          video_count INTEGER DEFAULT 0,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      // Create videos table with additional fields
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS videos (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          title TEXT NOT NULL,
-          studio_id INTEGER,
-          url TEXT UNIQUE NOT NULL,
-          streaming_url TEXT,
-          final_mp4_url TEXT,
-          poster_image_url TEXT,
-          duration TEXT,
-          views INTEGER DEFAULT 0,
-          rating TEXT,
-          tags TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (studio_id) REFERENCES studios (id)
-        )
-      `);
-    });
-  }
-
-  setupGracefulQuit() {
-    if (process.stdin.isTTY) {
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-      });
-      rl.on('line', (input) => {
-        if (input.toLowerCase().trim() === 'q') {
-          console.log('\n Graceful quit requested. Finishing current operations...');
-          this.shouldStop = true;
-        }
-      });
-      console.log(' Press "q" + Enter at any time to gracefully quit and save progress');
+  loadStudiosFromFile(filepath) {
+    try {
+      const lines = fs.readFileSync(filepath, 'utf8')
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean);
+      this.studios = lines.map((url, idx) => ({
+        id: idx + 1,
+        name: this.extractCategoryName(url) || `Category ${idx + 1}`,
+        url: url,
+        video_count: 0
+      }));
+    } catch (error) {
+      console.error("❌ Error loading category URLs:", error);
+      this.studios = [];
     }
+  }
+
+  extractCategoryName(url) {
+    // Try to derive logical name from URL, fallback to last segment
+    const match = url.match(/category\/([^\/]+)/);
+    if (match && match[1]) {
+      return decodeURIComponent(match[1])
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+    }
+    return url.split('/').filter(Boolean).pop();
   }
 
   async delay(ms) {
@@ -70,11 +50,9 @@ class EnhancedMediaScraper {
 
   async fetchPage(url, retries = 3) {
     for (let i = 0; i < retries; i++) {
-      if (this.shouldStop) {
-        throw new Error('Graceful quit requested');
-      }
+      if (this.shouldStop) throw new Error('Graceful quit requested');
       try {
-        console.log(` Fetching: ${url}`);
+        console.log(`📥 Fetching: ${url}`);
         const response = await axios.get(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -88,72 +66,29 @@ class EnhancedMediaScraper {
         });
         return response.data;
       } catch (error) {
-        const backoffTime = 2000 * Math.pow(2, i); // Exponential backoff
-        console.error(` Error fetching ${url} (attempt ${i + 1}/${retries}):`, error.message);
+        const backoffTime = 2000 * Math.pow(2, i);
+        console.error(`❌ Error fetching ${url} (attempt ${i + 1}/${retries}):`, error.message);
         if (i === retries - 1) throw error;
-        console.log(` Retrying in ${backoffTime / 1000}s...`);
+        console.log(`⏳ Retrying in ${backoffTime / 1000}s...`);
         await this.delay(backoffTime);
       }
     }
   }
 
-  async scrapeStudios() {
-    try {
-      const html = await this.fetchPage(this.baseUrl);
-      const $ = cheerio.load(html);
-      const studios = [];
-      $(".footer-widget .menu a").each((index, element) => {
-        const name = $(element).text().trim();
-        const url = $(element).attr('href');
-        if (name && url && url.includes('/category/')) {
-          studios.push({
-            name: name,
-            url: url
-          });
-        }
-      });
-      console.log(` Found ${studios.length} studios`);
-      // Save studios to database
-      for (const studio of studios) {
-        if (this.shouldStop) break;
-        await this.saveStudio(studio);
-      }
-      return studios;
-    } catch (error) {
-      console.error(' Error scraping studios:', error);
-      throw error;
-    }
-  }
-
-  async saveStudio(studio) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'INSERT OR IGNORE INTO studios (name, url) VALUES (?, ?)',
-        [studio.name, studio.url],
-        function (err) {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(this.lastID);
-          }
-        }
-      );
-    });
-  }
-
-  async scrapeVideosFromStudio(studioUrl, studioId, maxPages = Infinity) {
+  async scrapeVideosFromStudio(studioUrl, studioId) {
     let allVideos = [];
     let currentPage = 1;
     let hasNextPage = true;
-    while (hasNextPage && currentPage <= maxPages && !this.shouldStop) {
+    while (hasNextPage && !this.shouldStop) {
       try {
         const pageUrl = currentPage === 1 ? studioUrl : `${studioUrl}page/${currentPage}/`;
-        console.log(` Scraping page ${currentPage} for studio`);
+        console.log(`📄 Scraping page ${currentPage} for studio/category id=${studioId}`);
         const html = await this.fetchPage(pageUrl);
         const $ = cheerio.load(html);
+
         const videos = [];
-        // Collect video links from ul.videos-listing (selector confirmed in original)
-        $("ul.videos-listing li").each((index, element) => {
+        // Try multiple selectors for robustness (customize based on site layout)
+        $('ul.listing-videos li, .listing-videos li').each((index, element) => {
           if (this.shouldStop) return false;
           const $video = $(element);
           const title = $video.find('a span').text().trim();
@@ -163,73 +98,66 @@ class EnhancedMediaScraper {
           const views = $video.find('.views-infos').text().trim().replace(/[^0-9]/g, '');
           const rating = $video.find('.rating-infos').text().trim();
           if (title && url) {
-            videos.push({
+            const video = {
+              id: this.videos.length + videos.length + 1,
               title: title,
               studio_id: studioId,
               url: url,
               poster_image_url: posterImg,
               duration: duration,
               views: parseInt(views) || 0,
-              rating: rating
-            });
+              rating: rating,
+              studio_name: this.studios.find(s => s.id === studioId)?.name || 'Unknown',
+              created_at: new Date().toISOString()
+            };
+            videos.push(video);
           }
         });
-        console.log(` Found ${videos.length} videos on page ${currentPage}`);
+        console.log(`📹 Found ${videos.length} videos on page ${currentPage}`);
         allVideos = allVideos.concat(videos);
-        // Save videos to database
-        for (const video of videos) {
-          if (this.shouldStop) break;
-          await this.saveVideo(video);
-        }
-        const nextLink = $("a.next-page").attr("href");
+        this.videos = this.videos.concat(videos);
+
+        // Detect next page (try both .next and .next-page selectors for robustness)
+        const nextLink = $('a.next').attr('href') || $('a.next-page').attr('href');
         hasNextPage = !!nextLink;
         currentPage++;
         if (hasNextPage && !this.shouldStop) {
-          await this.delay(2000); // Rate limiting between pages
+          await this.delay(2000);
         }
       } catch (error) {
-        console.error(` Error scraping page ${currentPage} from ${studioUrl}:`, error);
+        console.error(`❌ Error scraping page ${currentPage} from ${studioUrl}:`, error);
         break;
       }
     }
-    // Update studio video count
-    await this.updateStudioVideoCount(studioId, allVideos.length);
     return allVideos;
   }
 
-  async updateStudioVideoCount(studioId, count) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'UPDATE studios SET video_count = video_count + ? WHERE id = ?',
-        [count, studioId],
-        function (err) {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        }
-      );
-    });
+  async scrapeAllCategories() {
+    // Scrape all categories/studios in URLs.txt for all pages and videos
+    for (const studio of this.studios) {
+      if (this.shouldStop) break;
+      await this.scrapeVideosFromStudio(studio.url, studio.id);
+    }
   }
 
-  async saveVideo(video) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        `INSERT OR IGNORE INTO videos
-         (title, studio_id, url, poster_image_url, duration, views, rating)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [video.title, video.studio_id, video.url, video.poster_image_url,
-          video.duration, video.views, video.rating],
-        function (err) {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(this.lastID);
-          }
+  async updateVideoDetails() {
+    const videosToUpdate = this.videos.filter(v => !v.streaming_url); // Update only those missing streaming_url
+    for (const video of videosToUpdate) {
+      if (this.shouldStop) break;
+      try {
+        console.log(`📝 Updating video ${video.id}`);
+        const details = await this.scrapeVideoDetails(video.url);
+        if (details && details.streaming_url) {
+          video.streaming_url = details.streaming_url;
+          video.final_mp4_url = details.final_mp4_url;
+          video.tags = details.tags_string;
+          console.log(`✅ Updated video ${video.id}`);
         }
-      );
-    });
+        await this.delay(3000);
+      } catch (error) {
+        console.error(`❌ Error updating video ${video.id}:`, error);
+      }
+    }
   }
 
   async scrapeVideoDetails(videoUrl) {
@@ -244,14 +172,10 @@ class EnhancedMediaScraper {
         rating: $('.rating').text().trim() || $('.rating-infos').text().trim(),
         tags: []
       };
-      // Extract tags from categories and tags section
       $('#cat-tag a').each((index, element) => {
         const tag = $(element).text().trim();
-        if (tag) {
-          details.tags.push(tag);
-        }
+        if (tag) details.tags.push(tag);
       });
-      // Extract iframe sources and follow to get final .mp4 URL
       const iframes = $('iframe');
       const streamingUrls = [];
       for (let i = 0; i < iframes.length; i++) {
@@ -266,7 +190,7 @@ class EnhancedMediaScraper {
               break;
             }
           } catch (error) {
-            console.error(` Error extracting final stream URL from ${src}:`, error.message);
+            console.error(`❌ Error extracting final stream URL from ${src}:`, error.message);
           }
         }
       }
@@ -274,14 +198,14 @@ class EnhancedMediaScraper {
       details.tags_string = details.tags.join(', ');
       return details;
     } catch (error) {
-      console.error(` Error scraping video details from ${videoUrl}:`, error);
+      console.error(`❌ Error scraping video details from ${videoUrl}:`, error);
       return null;
     }
   }
 
   async extractFinalStreamUrl(iframeUrl) {
     try {
-      console.log(` Following iframe: ${iframeUrl}`);
+      console.log(`🔗 Following iframe: ${iframeUrl}`);
       const html = await this.fetchPage(iframeUrl);
       const $ = cheerio.load(html);
       const videoSources = [];
@@ -308,192 +232,30 @@ class EnhancedMediaScraper {
       });
       return videoSources.length > 0 ? videoSources[0] : null;
     } catch (error) {
-      console.error(` Error extracting final stream URL:`, error.message);
+      console.error(`❌ Error extracting final stream URL:`, error.message);
       return null;
     }
   }
 
-  async updateVideoDetails() {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT id, url FROM videos WHERE tags IS NULL OR final_mp4_url IS NULL LIMIT 10',
-        async (err, rows) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          console.log(` Updating details for ${rows.length} videos`);
-          for (const row of rows) {
-            if (this.shouldStop) break;
-            try {
-              console.log(` Updating video ${row.id}`);
-              const details = await this.scrapeVideoDetails(row.url);
-              if (details) {
-                await this.updateVideoDetailsInDb(row.id, details);
-                console.log(` Updated video ${row.id}`);
-              }
-              await this.delay(3000); // Rate limiting
-            } catch (error) {
-              console.error(` Error updating video ${row.id}:`, error);
-            }
-          }
-          resolve();
-        }
-      );
-    });
-  }
-
-  async updateVideoDetailsInDb(videoId, details) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        `UPDATE videos SET
-          streaming_url = COALESCE(?, streaming_url),
-          final_mp4_url = COALESCE(?, final_mp4_url),
-          tags = COALESCE(?, tags),
-          poster_image_url = COALESCE(?, poster_image_url),
-          duration = COALESCE(?, duration),
-          views = COALESCE(?, views),
-          rating = COALESCE(?, rating)
-        WHERE id = ?`,
-        [
-          details.streaming_url,
-          details.final_mp4_url,
-          details.tags_string,
-          details.poster,
-          details.duration,
-          parseInt(details.views) || 0,
-          details.rating,
-          videoId
-        ],
-        function (err) {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        }
-      );
-    });
-  }
-
   async getStudios() {
-    return new Promise((resolve, reject) => {
-      this.db.all('SELECT * FROM studios ORDER BY name', (err, rows) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+    return this.studios;
   }
 
   async getVideosByStudio(studioId) {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM videos WHERE studio_id = ? ORDER BY created_at DESC',
-        [studioId],
-        (err, rows) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows);
-          }
-        }
-      );
-    });
+    return this.videos.filter(v => v.studio_id == studioId);
   }
 
   async getAllVideos() {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        `SELECT v.*, s.name as studio_name
-         FROM videos v
-         LEFT JOIN studios s ON v.studio_id = s.id
-         ORDER BY v.created_at DESC`,
-        (err, rows) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows);
-          }
-        }
-      );
-    });
+    return this.videos;
   }
 
   async getVideoById(videoId) {
-    return new Promise((resolve, reject) => {
-      this.db.get(
-        `SELECT v.*, s.name as studio_name
-         FROM videos v
-         LEFT JOIN studios s ON v.studio_id = s.id
-         WHERE v.id = ?`,
-        [videoId],
-        (err, row) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(row);
-          }
-        }
-      );
-    });
-  }
-
-  // Modified to run full capacity: all studios and all pages per studio
-  async runFullScrape(maxStudios = Infinity, maxPagesPerStudio = Infinity) {
-    try {
-      console.log(' Starting full scrape...');
-
-      // Scrape all studios without slicing limit
-      if (!this.shouldStop) {
-        console.log('\n Step 1: Scraping studios...');
-        await this.scrapeStudios();
-      }
-
-      if (!this.shouldStop) {
-        console.log('\n Step 2: Scraping videos...');
-        const studios = await this.getStudios();
-        // Use all studios (no slice)
-        const selectedStudios = studios;
-
-        for (const studio of selectedStudios) {
-          if (this.shouldStop) break;
-          console.log(`\n Scraping videos from: ${studio.name}`);
-          await this.scrapeVideosFromStudio(studio.url, studio.id, maxPagesPerStudio);
-          await this.delay(5000); // Rate limiting between studios
-        }
-      }
-
-      if (!this.shouldStop) {
-        console.log('\n Step 3: Updating video details...');
-        await this.updateVideoDetails();
-      }
-
-      // Print final stats
-      const studios = await this.getStudios();
-      const videos = await this.getAllVideos();
-
-      console.log('\n Scraping completed!');
-      console.log(` Total studios: ${studios.length}`);
-      console.log(` Total videos: ${videos.length}`);
-      console.log(` Videos with streaming URLs: ${videos.filter(v => v.streaming_url).length}`);
-      console.log(` Videos with final MP4 URLs: ${videos.filter(v => v.final_mp4_url).length}`);
-
-      if (this.shouldStop) {
-        console.log('\n Scraping was stopped gracefully. Progress has been saved.');
-      }
-    } catch (error) {
-      console.error('Full scrape failed:', error);
-      throw error;
-    }
+    return this.videos.find(v => v.id == videoId) || null;
   }
 
   close() {
-    this.db.close();
-    process.exit(0);
+    // Nothing to close for stateless/in-memory
   }
 }
 
-module.exports = EnhancedMediaScraper;
+module.exports = VercelMediaScraper;
