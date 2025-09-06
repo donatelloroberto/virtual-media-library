@@ -1,0 +1,33 @@
+{
+  "name": "virtual-media-library",
+  "version": "1.0.0",
+  "description": "A comprehensive virtual media library with web scraping and streaming capabilities",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "echo 'No build step required'",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "media",
+    "library",
+    "streaming",
+    "scraping",
+    "video"
+  ],
+  "author": "Virtual Media Library",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.11.0",
+    "cheerio": "^1.1.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "mongodb": "^6.19.0",
+    "node-cron": "^4.2.1",
+    "sqlite3": "^5.1.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

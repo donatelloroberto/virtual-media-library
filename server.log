@@ -1,0 +1,12 @@
+nohup: ignoring input
+Media Library API server running on http://0.0.0.0:3000
+Background scraping scheduled every 6 hours
+[2025-08-30T11:56:26.022Z] [PID: 1674] [32m[NODE-CRON][32m [33m[WARN][0m missed execution at Thu Aug 28 2025 06:00:00 GMT-0400 (Eastern Daylight Time)! Possible blocking IO or high CPU user at the same process used by node-cron.
+[2025-08-30T11:56:26.589Z] [PID: 1674] [32m[NODE-CRON][32m [33m[WARN][0m missed execution at Thu Aug 28 2025 12:00:00 GMT-0400 (Eastern Daylight Time)! Possible blocking IO or high CPU user at the same process used by node-cron.
+[2025-08-30T11:56:26.792Z] [PID: 1674] [32m[NODE-CRON][32m [33m[WARN][0m missed execution at Thu Aug 28 2025 18:00:00 GMT-0400 (Eastern Daylight Time)! Possible blocking IO or high CPU user at the same process used by node-cron.
+[2025-08-30T11:56:26.912Z] [PID: 1674] [32m[NODE-CRON][32m [33m[WARN][0m missed execution at Fri Aug 29 2025 00:00:00 GMT-0400 (Eastern Daylight Time)! Possible blocking IO or high CPU user at the same process used by node-cron.
+[2025-08-30T11:56:26.929Z] [PID: 1674] [32m[NODE-CRON][32m [33m[WARN][0m missed execution at Fri Aug 29 2025 06:00:00 GMT-0400 (Eastern Daylight Time)! Possible blocking IO or high CPU user at the same process used by node-cron.
+[2025-08-30T11:56:27.256Z] [PID: 1674] [32m[NODE-CRON][32m [33m[WARN][0m missed execution at Fri Aug 29 2025 12:00:00 GMT-0400 (Eastern Daylight Time)! Possible blocking IO or high CPU user at the same process used by node-cron.
+[2025-08-30T11:56:27.264Z] [PID: 1674] [32m[NODE-CRON][32m [33m[WARN][0m missed execution at Fri Aug 29 2025 18:00:00 GMT-0400 (Eastern Daylight Time)! Possible blocking IO or high CPU user at the same process used by node-cron.
+[2025-08-30T11:56:27.271Z] [PID: 1674] [32m[NODE-CRON][32m [33m[WARN][0m missed execution at Sat Aug 30 2025 00:00:00 GMT-0400 (Eastern Daylight Time)! Possible blocking IO or high CPU user at the same process used by node-cron.
+[2025-08-30T11:56:27.279Z] [PID: 1674] [32m[NODE-CRON][32m [33m[WARN][0m missed execution at Sat Aug 30 2025 06:00:00 GMT-0400 (Eastern Daylight Time)! Possible blocking IO or high CPU user at the same process used by node-cron.
